@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50" viewBox="0 0 200 50">
+  <rect width="200" height="50" fill="#f0f0f0" rx="10"/>
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="20" fill="#333">My Custom App</text>
+  <circle cx="25" cy="25" r="15" fill="#007bff"/>
+</svg>
