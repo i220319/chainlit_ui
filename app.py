@@ -135,27 +135,28 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
 
                 # Create and send the final message
                 final_msg = cl.Message(content="")
-                await final_msg.send()
+                
 
                 # Stream the final content
                 result_body = response.get("body", "")
                 cl.user_session.set("last_analysis_result", result_body)
                 await stream_output(final_msg, result_body)
-                await final_msg.update()
-                feedback_msg = cl.Message(
-                    content="反馈",
-                    actions=[
-                        cl.Action(name="feedback", payload={"value": "up"}, label="👍 有帮助"),
-                        cl.Action(name="feedback", payload={"value": "down"}, label="👎 需改进"),
-                        cl.Action(name="auto_comment", payload={"value": "add"}, label="📝 自动添加评论"),
-                    ],
+                feedback_element = cl.CustomElement(
+                    name="FeedbackPanel",
+                    props={
+                        "feedbackState": None,
+                        "autoCommentState": None,
+                    },
                 )
-                await feedback_msg.send()
-                cl.user_session.set("feedback_msg_id", feedback_msg.id)
+                final_msg.elements = [feedback_element]
+
+                cl.user_session.set("feedback_element", feedback_element)
                 cl.user_session.set("feedback_state", None)
                 cl.user_session.set("auto_comment_state", None)
                 cl.user_session.set("auto_comment_pending", False)
                 cl.user_session.set("auto_comment_pending_key", None)
+
+                await final_msg.send()
 
         else:
             chainlit_log(response)
@@ -288,22 +289,13 @@ async def handle_auto_comment(action: cl.Action):
         await refresh_feedback_message()
 
 async def refresh_feedback_message() -> None:
-    feedback_msg_id = cl.user_session.get("feedback_msg_id")
-    if not feedback_msg_id:
+    feedback_element = cl.user_session.get("feedback_element")
+    if not feedback_element:
         return
     feedback_state = cl.user_session.get("feedback_state")
     auto_comment_state = cl.user_session.get("auto_comment_state")
-    if feedback_state == "up":
-        content = "反馈（✅ 感谢反馈：已记录为👍 有帮助）"
-    elif feedback_state == "down":
-        content = "反馈（✅ 感谢反馈：已记录为👎 需改进）"
-    else:
-        content = "反馈"
-    if auto_comment_state:
-        content = f"{content} | 自动评论（{auto_comment_state}）"
-    feedback_msg = cl.Message(
-        id=feedback_msg_id,
-        content=content,
-    )
-    await feedback_msg.update()
-
+    feedback_element.props = {
+        "feedbackState": feedback_state,
+        "autoCommentState": auto_comment_state,
+    }
+    await feedback_element.update()
