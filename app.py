@@ -5,6 +5,12 @@ import re
 from urllib.parse import urlparse, parse_qs
 from typing import Dict, Optional
 from test_client import analyze_logs_stream
+from utils.logger import chainlit_log
+from utils.config import load_config
+from utils.jira_client import MyJira
+
+config = load_config()
+myjira = MyJira(config.jira_server, config.jira_username, config.jira_password)
 # 1. 模拟的Yield函数 (Mock Yield Function)
 async def process_input(text: str, files: Optional[list] = None):
     """
@@ -44,7 +50,7 @@ async def process_input(text: str, files: Optional[list] = None):
     while True:
         item = await q.get()
         if item is None:
-            print("退出主循环")
+            chainlit_log("退出主循环")
             break
         yield item
 
@@ -68,7 +74,7 @@ def extract_key_from_session_env() -> Optional[str]:
     environ = getattr(session, "environ", None) or {}
 
     referer = environ.get("HTTP_REFERER", "")
-    print(f"referer:{referer}")
+    chainlit_log(f"referer:{referer}")
     if referer:
         referer_key = extract_key_from_url_request(referer)
         if referer_key:
@@ -79,11 +85,13 @@ def extract_key_from_session_env() -> Optional[str]:
 async def run_analysis(text: str, elements: Optional[list]) -> None:
     """执行分析流程并输出步骤与最终结果。"""
     status_msg = cl.Message(content="🔎 **Analysis in progress...**")
-    print(f"message.content:{text}")
+    chainlit_log(f"message.content:{text}")
     await status_msg.send()
+    cl.user_session.set("last_issue_key", text)
     steps = []
     current_step = None
     async for response in process_input(text, elements):
+        chainlit_log(f"response:{response}")
         if "event" in response:
             if response.get("event") != "content":
                 event = response["event"]
@@ -118,8 +126,8 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
                     await current_step.update()
             else:
                 # Close the step if it exists
-                for step in steps:
-                    await step.remove()
+                # for step in steps:
+                #     await step.remove()
 
                 # Update the status message to show completion
                 status_msg.content = "✅ **Analysis Process**"
@@ -130,10 +138,27 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
                 await final_msg.send()
 
                 # Stream the final content
-                await stream_output(final_msg, response.get("body", ""))
+                result_body = response.get("body", "")
+                cl.user_session.set("last_analysis_result", result_body)
+                await stream_output(final_msg, result_body)
                 await final_msg.update()
+                feedback_msg = cl.Message(
+                    content="反馈",
+                    actions=[
+                        cl.Action(name="feedback", payload={"value": "up"}, label="👍 有帮助"),
+                        cl.Action(name="feedback", payload={"value": "down"}, label="👎 需改进"),
+                        cl.Action(name="auto_comment", payload={"value": "add"}, label="📝 自动添加评论"),
+                    ],
+                )
+                await feedback_msg.send()
+                cl.user_session.set("feedback_msg_id", feedback_msg.id)
+                cl.user_session.set("feedback_state", None)
+                cl.user_session.set("auto_comment_state", None)
+                cl.user_session.set("auto_comment_pending", False)
+                cl.user_session.set("auto_comment_pending_key", None)
+
         else:
-            print(response)
+            chainlit_log(response)
 
 # 2. 用户登录管理 (User Login Management)
 # Chainlit looks for this callback to enable authentication
@@ -202,4 +227,83 @@ async def main(message: cl.Message):
     # 3. Send the Final Message after processing is done.
     
     await run_analysis(message.content, message.elements)
+
+
+def add_comment_to_jira(issue_key: str, comment_body: str) -> None:
+
+    chainlit_log(f"issue_key:{issue_key}")
+    jira_comment_header = '''
+    ⚠️ AI智能分析(For reference only) 有任何意见和建议可随时联系 nan.li或 lingzhi.bi
+'''
+    web_link = f'''\n🔗 Reference:
+不便上传至 Jira 的日志，可通过以下地址在线分析：
+http://10.18.11.98:5000/
+如对本次自动分析结果存在疑问、发现异常情况或有优化建议，欢迎通过以下地址提交反馈：
+http://10.18.11.98:8053/?page=feedback'''
+    comment_body = jira_comment_header + comment_body +  web_link
+    myjira.addComments(issue_key, comment_body)
+    return None
+
+
+@cl.action_callback("feedback")
+async def handle_feedback(action: cl.Action):
+    feedback_value = getattr(action, "payload", {}).get("value", "")
+    cl.user_session.set("feedback_state", feedback_value)
+    await refresh_feedback_message()
+
+
+@cl.action_callback("auto_comment")
+async def handle_auto_comment(action: cl.Action):
+    issue_key = cl.user_session.get("last_issue_key")
+    analysis_result = cl.user_session.get("last_analysis_result")
+
+    if not issue_key:
+        cl.user_session.set("auto_comment_state", "❌ 未找到 Jira 号")
+        await refresh_feedback_message()
+        return
+    if not analysis_result:
+        cl.user_session.set("auto_comment_state", "❌ 未找到分析结果")
+        await refresh_feedback_message()
+        return
+    try:
+        existing = myjira.getAiCommentTimeWithSql(f"key = {issue_key}")
+        pending = cl.user_session.get("auto_comment_pending")
+        pending_key = cl.user_session.get("auto_comment_pending_key")
+        if existing:
+            if not pending or pending_key != issue_key:
+                cl.user_session.set("auto_comment_pending", True)
+                cl.user_session.set("auto_comment_pending_key", issue_key)
+                cl.user_session.set("auto_comment_state", f"⚠️ {issue_key} 已有评论，再点一次确认")
+                await refresh_feedback_message()
+                return
+        add_comment_to_jira(issue_key, analysis_result)
+        cl.user_session.set("auto_comment_pending", False)
+        cl.user_session.set("auto_comment_pending_key", None)
+        cl.user_session.set("auto_comment_state", f"✅ 已添加到 {issue_key}")
+        await refresh_feedback_message()
+    except Exception as exc:
+        cl.user_session.set("auto_comment_pending", False)
+        cl.user_session.set("auto_comment_pending_key", None)
+        cl.user_session.set("auto_comment_state", f"❌ 失败：{exc}")
+        await refresh_feedback_message()
+
+async def refresh_feedback_message() -> None:
+    feedback_msg_id = cl.user_session.get("feedback_msg_id")
+    if not feedback_msg_id:
+        return
+    feedback_state = cl.user_session.get("feedback_state")
+    auto_comment_state = cl.user_session.get("auto_comment_state")
+    if feedback_state == "up":
+        content = "反馈（✅ 感谢反馈：已记录为👍 有帮助）"
+    elif feedback_state == "down":
+        content = "反馈（✅ 感谢反馈：已记录为👎 需改进）"
+    else:
+        content = "反馈"
+    if auto_comment_state:
+        content = f"{content} | 自动评论（{auto_comment_state}）"
+    feedback_msg = cl.Message(
+        id=feedback_msg_id,
+        content=content,
+    )
+    await feedback_msg.update()
 
