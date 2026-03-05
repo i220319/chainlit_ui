@@ -284,7 +284,7 @@ http://10.18.11.98:5000/
 如对本次自动分析结果存在疑问、发现异常情况或有优化建议，欢迎通过以下地址提交反馈：
 http://10.18.11.98:8053/?page=feedback'''
     comment_body = jira_comment_header + comment_body +  web_link
-    # myjira.addComments(issue_key, comment_body)
+    myjira.addComments(issue_key, comment_body)
     return None
 
 
