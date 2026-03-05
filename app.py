@@ -8,9 +8,23 @@ from test_client import analyze_logs_stream
 from utils.logger import chainlit_log
 from utils.config import load_config
 from utils.jira_client import MyJira
+from utils.mysql_client import MySQLClient
+
+
 
 config = load_config()
+chainlit_log(f"加载配置成功 load_config:{load_config}")
 myjira = MyJira(config.jira_server, config.jira_username, config.jira_password)
+mysql_client = MySQLClient(
+    host=config.mysql_host,
+    port=config.mysql_port,
+    user=config.mysql_user,
+    password=config.mysql_password,
+    database=config.mysql_database,
+    table=config.mysql_table,
+)
+mysql_client.init_feedback_storage(config.mysql_database, config.mysql_table)
+chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_table}")
 # 1. 模拟的Yield函数 (Mock Yield Function)
 async def process_input(text: str, files: Optional[list] = None):
     """
@@ -64,9 +78,6 @@ def extract_key_from_url_request(url: str) -> Optional[str]:
     return None
 
 
-
-
-
 def extract_key_from_session_env() -> Optional[str]:
     """从会话环境或请求上下文中提取 key 参数。"""
     context = getattr(cl, "context", None)
@@ -82,9 +93,36 @@ def extract_key_from_session_env() -> Optional[str]:
     return None
 
 
+def get_client_ip() -> Optional[str]:
+    context = getattr(cl, "context", None)
+    session = getattr(context, "session", None)
+    environ = getattr(session, "environ", None) or {}
+    forwarded = environ.get("HTTP_X_FORWARDED_FOR", "")
+    # chainlit_log(f"forwarded:{forwarded}")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = environ.get("HTTP_X_REAL_IP", "")
+    # chainlit_log(f"real_ip:{real_ip}")
+    if real_ip:
+        return real_ip
+    remote_addr = environ.get("REMOTE_ADDR")
+    # chainlit_log(f"remote_addr:{remote_addr}")
+    return remote_addr
+
+
 async def run_analysis(text: str, elements: Optional[list]) -> None:
     """执行分析流程并输出步骤与最终结果。"""
     status_msg = cl.Message(content="🔎 **Analysis in progress...**")
+    # 清掉之前的组件
+    prev_feedback_element = cl.user_session.get("feedback_element")
+    if prev_feedback_element:
+        try:
+            await prev_feedback_element.remove()
+        except Exception as exc:
+            chainlit_log(f"remove feedback_element error:{exc}")
+    match = re.search(r"[A-Z]+-\d+", text or "")
+    if match:
+        text = match.group(0)
     chainlit_log(f"message.content:{text}")
     await status_msg.send()
     cl.user_session.set("last_issue_key", text)
@@ -141,6 +179,9 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
                 result_body = response.get("body", "")
                 cl.user_session.set("last_analysis_result", result_body)
                 await stream_output(final_msg, result_body)
+                await final_msg.send()
+                invalid_msg = "No files provided for log analysis."
+                # if result_body != invalid_msg:
                 feedback_element = cl.CustomElement(
                     name="FeedbackPanel",
                     props={
@@ -153,10 +194,11 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
                 cl.user_session.set("feedback_element", feedback_element)
                 cl.user_session.set("feedback_state", None)
                 cl.user_session.set("auto_comment_state", None)
+                cl.user_session.set("suggestion_state", None)
                 cl.user_session.set("auto_comment_pending", False)
                 cl.user_session.set("auto_comment_pending_key", None)
 
-                await final_msg.send()
+                await final_msg.update()
 
         else:
             chainlit_log(response)
@@ -242,15 +284,98 @@ http://10.18.11.98:5000/
 如对本次自动分析结果存在疑问、发现异常情况或有优化建议，欢迎通过以下地址提交反馈：
 http://10.18.11.98:8053/?page=feedback'''
     comment_body = jira_comment_header + comment_body +  web_link
-    myjira.addComments(issue_key, comment_body)
+    # myjira.addComments(issue_key, comment_body)
     return None
 
 
 @cl.action_callback("feedback")
 async def handle_feedback(action: cl.Action):
-    feedback_value = getattr(action, "payload", {}).get("value", "")
+    payload = getattr(action, "payload", {}) or {}
+    feedback_value = payload.get("value", "")
+    issue_key = cl.user_session.get("last_issue_key")
+    analysis_result = cl.user_session.get("last_analysis_result")
+    suggestion = payload.get("suggestion")
+    client_ip = get_client_ip()
+    extra = {
+        "source": {
+            "issue_key": issue_key,
+            "analysis_result": analysis_result,
+        }
+    }
+    try:
+        existing = mysql_client.get_feedback_by_analysis_result(issue_key, analysis_result)
+        if existing:
+            stored_feedback = existing.get("feedback")
+            stored_suggestion = existing.get("feedback_suggestion")
+            normalized_feedback = feedback_value
+            if stored_feedback != normalized_feedback or stored_suggestion != suggestion:
+                mysql_client.update_feedback(
+                    feedback_id=existing.get("feedback_id"),
+                    feedback_value=feedback_value,
+                    suggestion=suggestion,
+                    extra=extra,
+                    ip=client_ip,
+                )
+                chainlit_log(f"更新数据库：feedback_value:{feedback_value}, suggestion:{suggestion}, extra:{extra}")
+        else:
+            mysql_client.insert_feedback(
+                feedback_value=feedback_value,
+                suggestion=suggestion,
+                extra=extra,
+                ip=client_ip,
+            )
+            chainlit_log(f"插入数据库：feedback_value{feedback_value}, suggestion:{suggestion}, extra:{extra}")
+    except Exception as exc:
+        chainlit_log(f"insert_feedback error:{exc}")
+    chainlit_log(f"set feedbackState:{feedback_value}")
     cl.user_session.set("feedback_state", feedback_value)
     await refresh_feedback_message()
+
+
+@cl.action_callback("suggestion_submit")
+async def handle_suggestion_submit(action: cl.Action):
+    payload = getattr(action, "payload", {}) or {}
+    suggestion = payload.get("suggestion")
+    if not suggestion:
+        return
+    feedback_value = cl.user_session.get("feedback_state")
+    issue_key = cl.user_session.get("last_issue_key")
+    analysis_result = cl.user_session.get("last_analysis_result")
+    client_ip = get_client_ip()
+    extra = {
+        "source": {
+            "issue_key": issue_key,
+            "analysis_result": analysis_result,
+        }
+    }
+    try:
+        existing = mysql_client.get_feedback_by_analysis_result(issue_key, analysis_result)
+        if existing:
+            stored_feedback = existing.get("feedback")
+            stored_suggestion = existing.get("feedback_suggestion")
+            if stored_feedback != feedback_value or stored_suggestion != suggestion:
+                mysql_client.update_feedback(
+                    feedback_id=existing.get("feedback_id"),
+                    feedback_value=feedback_value,
+                    suggestion=suggestion,
+                    extra=extra,
+                    ip=client_ip,
+                )
+                chainlit_log(f"更新建议到数据库：feedback_value:{feedback_value}, suggestion:{suggestion}, extra:{extra}")
+                cl.user_session.set("suggestion_state", "已提交")
+        else:
+            mysql_client.insert_feedback(
+                feedback_value=feedback_value,
+                suggestion=suggestion,
+                extra=extra,
+                ip=client_ip,
+            )
+            chainlit_log(f"插入建议到数据库：feedback_value:{feedback_value}, suggestion:{suggestion}, extra:{extra}")
+            cl.user_session.set("suggestion_state", "已提交")
+    except Exception as exc:
+        chainlit_log(f"suggestion_submit error:{exc}")
+    else:
+        await refresh_feedback_message()
 
 
 @cl.action_callback("auto_comment")
@@ -274,13 +399,15 @@ async def handle_auto_comment(action: cl.Action):
             if not pending or pending_key != issue_key:
                 cl.user_session.set("auto_comment_pending", True)
                 cl.user_session.set("auto_comment_pending_key", issue_key)
-                cl.user_session.set("auto_comment_state", f"⚠️ {issue_key} 已有评论，再点一次确认")
+                cl.user_session.set("auto_comment_state", f"⚠️ {issue_key} 已有 AI智能分析 ，需要再次添加，请再点击一次")
+                chainlit_log(f"⚠️ {issue_key} 已有评论，再点一次确认")
                 await refresh_feedback_message()
                 return
         add_comment_to_jira(issue_key, analysis_result)
         cl.user_session.set("auto_comment_pending", False)
         cl.user_session.set("auto_comment_pending_key", None)
-        cl.user_session.set("auto_comment_state", f"✅ 已添加到 {issue_key}")
+        cl.user_session.set("auto_comment_state", f"✅ AI智能分析已添加到 {issue_key}")
+        chainlit_log(f"✅ 已添加到 {issue_key}")
         await refresh_feedback_message()
     except Exception as exc:
         cl.user_session.set("auto_comment_pending", False)
@@ -294,8 +421,10 @@ async def refresh_feedback_message() -> None:
         return
     feedback_state = cl.user_session.get("feedback_state")
     auto_comment_state = cl.user_session.get("auto_comment_state")
+    suggestion_state = cl.user_session.get("suggestion_state")
     feedback_element.props = {
         "feedbackState": feedback_state,
         "autoCommentState": auto_comment_state,
+        "suggestionState": suggestion_state,
     }
     await feedback_element.update()
