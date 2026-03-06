@@ -9,12 +9,13 @@ export default function FeedbackPanel() {
   const feedbackState = panelProps.feedbackState
   const autoCommentState = panelProps.autoCommentState
   const suggestionState = panelProps.suggestionState
+  const lastIssueKey = panelProps.last_issue_key || ""
   const feedbackLabel =
     feedbackState === "like"
       ? "✅ 已记录为👍 有帮助"
       : feedbackState === "dislike"
         ? "✅ 已记录为👎 需改进"
-        : "未反馈"
+        : ""
   return (
     <div className="flex flex-col gap-2">
       <div className="text-xs text-muted-foreground">
@@ -48,7 +49,7 @@ export default function FeedbackPanel() {
             variant="outline"
             onClick={() => callAction({ name: "auto_comment", payload: { value: "add" } })}
           >
-            📝 自动添加评论
+            📝 添加comment到 {lastIssueKey || "未知Issue"}
           </Button>
         )}
         <Button

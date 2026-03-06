@@ -98,15 +98,15 @@ def get_client_ip() -> Optional[str]:
     session = getattr(context, "session", None)
     environ = getattr(session, "environ", None) or {}
     forwarded = environ.get("HTTP_X_FORWARDED_FOR", "")
-    # chainlit_log(f"forwarded:{forwarded}")
+    chainlit_log(f"forwarded:{forwarded}")
     if forwarded:
         return forwarded.split(",")[0].strip()
     real_ip = environ.get("HTTP_X_REAL_IP", "")
-    # chainlit_log(f"real_ip:{real_ip}")
+    chainlit_log(f"real_ip:{real_ip}")
     if real_ip:
         return real_ip
     remote_addr = environ.get("REMOTE_ADDR")
-    # chainlit_log(f"remote_addr:{remote_addr}")
+    chainlit_log(f"remote_addr:{remote_addr}")
     return remote_addr
 
 
@@ -187,6 +187,7 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
                     props={
                         "feedbackState": None,
                         "autoCommentState": None,
+                        "last_issue_key": text,
                     },
                 )
                 final_msg.elements = [feedback_element]
@@ -308,15 +309,15 @@ async def handle_feedback(action: cl.Action):
             stored_feedback = existing.get("feedback")
             stored_suggestion = existing.get("feedback_suggestion")
             normalized_feedback = feedback_value
-            if stored_feedback != normalized_feedback or stored_suggestion != suggestion:
+            if stored_feedback != normalized_feedback:
                 mysql_client.update_feedback(
                     feedback_id=existing.get("feedback_id"),
                     feedback_value=feedback_value,
-                    suggestion=suggestion,
+                    suggestion=stored_suggestion,
                     extra=extra,
                     ip=client_ip,
                 )
-                chainlit_log(f"更新数据库：feedback_value:{feedback_value}, suggestion:{suggestion}, extra:{extra}")
+                chainlit_log(f"更新数据库：feedback_value:{feedback_value}, extra:{extra}")
         else:
             mysql_client.insert_feedback(
                 feedback_value=feedback_value,
@@ -353,15 +354,15 @@ async def handle_suggestion_submit(action: cl.Action):
         if existing:
             stored_feedback = existing.get("feedback")
             stored_suggestion = existing.get("feedback_suggestion")
-            if stored_feedback != feedback_value or stored_suggestion != suggestion:
+            if stored_suggestion != suggestion:
                 mysql_client.update_feedback(
                     feedback_id=existing.get("feedback_id"),
-                    feedback_value=feedback_value,
+                    feedback_value=stored_feedback,
                     suggestion=suggestion,
                     extra=extra,
                     ip=client_ip,
                 )
-                chainlit_log(f"更新建议到数据库：feedback_value:{feedback_value}, suggestion:{suggestion}, extra:{extra}")
+                chainlit_log(f"更新建议到数据库：suggestion:{suggestion}, extra:{extra}")
                 cl.user_session.set("suggestion_state", "已提交")
         else:
             mysql_client.insert_feedback(
@@ -422,9 +423,11 @@ async def refresh_feedback_message() -> None:
     feedback_state = cl.user_session.get("feedback_state")
     auto_comment_state = cl.user_session.get("auto_comment_state")
     suggestion_state = cl.user_session.get("suggestion_state")
+    last_issue_key = cl.user_session.get("last_issue_key")
     feedback_element.props = {
         "feedbackState": feedback_state,
         "autoCommentState": auto_comment_state,
+        "last_issue_key": last_issue_key,
         "suggestionState": suggestion_state,
     }
     await feedback_element.update()

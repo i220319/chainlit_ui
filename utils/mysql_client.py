@@ -112,7 +112,8 @@ class MySQLClient:
             f"""
             CREATE TABLE IF NOT EXISTS `{database}`.`{table}` (
                 feedback_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                feedback_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 ip VARCHAR(45),
                 feedback ENUM('like','dislike') NOT NULL,
                 feedback_suggestion TEXT,
@@ -220,7 +221,7 @@ class MySQLClient:
             FROM `{target_database}`.`{target_table}`
             WHERE JSON_UNQUOTE(JSON_EXTRACT(extra, '$.source.analysis_result')) = %s
               AND JSON_UNQUOTE(JSON_EXTRACT(extra, '$.source.issue_key')) = %s
-            ORDER BY feedback_time DESC
+            ORDER BY update_time DESC
             LIMIT 1
             """,
             (analysis_result, issue_key),
