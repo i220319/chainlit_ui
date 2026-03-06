@@ -18,6 +18,7 @@ class MySQLClient:
         password=None,
         database=None,
         table=None,
+        analysis_table=None,
         charset="utf8mb4",
         autocommit=False,
     ):
@@ -28,6 +29,7 @@ class MySQLClient:
         self.password = password or config.mysql_password
         self.database = database or config.mysql_database
         self.table = table or config.mysql_table
+        self.analysis_table = analysis_table or config.mysql_analysis_table
         self.charset = charset
         self.autocommit = autocommit
         self._conn = None
@@ -123,6 +125,27 @@ class MySQLClient:
         )
         self._conn.commit()
 
+    def create_analysis_table(self, database, table):
+        if not database:
+            raise ValueError("Database name is required")
+        if not table:
+            raise ValueError("Table name is required")
+        cur = self.cursor()
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS `{database}`.`{table}` (
+                analysis_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                ip VARCHAR(45),
+                input_text TEXT,
+                result_body LONGTEXT,
+                extra JSON
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        self._conn.commit()
+
     def init_feedback_storage(
         self,
         database=None,
@@ -138,6 +161,22 @@ class MySQLClient:
         self.create_feedback_table(target_database, target_table)
         self.database = target_database
         self.table = target_table
+
+    def init_analysis_storage(
+        self,
+        database=None,
+        table=None,
+    ):
+        if not database:
+            raise ValueError("Database name is required")
+        if not table:
+            raise ValueError("Table name is required")
+        target_database = database
+        target_table = table
+        self.create_database(target_database)
+        self.create_analysis_table(target_database, target_table)
+        self.database = target_database
+        self.analysis_table = target_table
 
     def insert_feedback(
         self,
@@ -173,6 +212,70 @@ class MySQLClient:
         )
         self._conn.commit()
         self.database = target_database
+
+    def insert_analysis_log(
+        self,
+        ip=None,
+        input_text=None,
+        result_body=None,
+        extra=None,
+        database=None,
+        table=None,
+    ):
+        target_database = database or self.database
+        target_table = table or self.analysis_table
+        if not target_database:
+            raise ValueError("Database name is required")
+        if not target_table:
+            raise ValueError("Table name is required")
+        extra_json = json.dumps(extra or {}, ensure_ascii=False)
+        cur = self.cursor()
+        cur.execute(
+            f"""
+            INSERT INTO `{target_database}`.`{target_table}`
+                (ip, input_text, result_body, extra)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (ip, input_text, result_body, extra_json),
+        )
+        self._conn.commit()
+        self.database = target_database
+
+    def update_analysis_log_add_comment(
+        self,
+        input_text,
+        result_body,
+        database=None,
+        table=None,
+    ):
+        if not input_text or not result_body:
+            return 0
+        target_database = database or self.database
+        target_table = table or self.analysis_table
+        if not target_database:
+            raise ValueError("Database name is required")
+        if not target_table:
+            raise ValueError("Table name is required")
+        cur = self.cursor()
+        cur.execute(
+            f"""
+            UPDATE `{target_database}`.`{target_table}`
+            SET extra = JSON_SET(
+                COALESCE(extra, JSON_OBJECT()),
+                '$.add_comment_count',
+                COALESCE(
+                    CAST(JSON_UNQUOTE(JSON_EXTRACT(extra, '$.add_comment_count')) AS UNSIGNED),
+                    0
+                ) + 1
+            )
+            WHERE input_text = %s AND result_body = %s
+            ORDER BY update_time DESC
+            LIMIT 1
+            """,
+            (input_text, result_body),
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     def feedback_exists_by_analysis_result(
         self,

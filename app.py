@@ -2,6 +2,7 @@ import chainlit as cl
 import asyncio
 import threading
 import re
+import time
 from urllib.parse import urlparse, parse_qs
 from typing import Dict, Optional
 from test_client import analyze_logs_stream
@@ -22,9 +23,11 @@ mysql_client = MySQLClient(
     password=config.mysql_password,
     database=config.mysql_database,
     table=config.mysql_table,
+    analysis_table=config.mysql_analysis_table,
 )
 mysql_client.init_feedback_storage(config.mysql_database, config.mysql_table)
-chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_table}")
+mysql_client.init_analysis_storage(config.mysql_database, config.mysql_analysis_table)
+chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_table}/{config.mysql_analysis_table}")
 # 1. 模拟的Yield函数 (Mock Yield Function)
 async def process_input(text: str, files: Optional[list] = None):
     """
@@ -120,9 +123,11 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
             await prev_feedback_element.remove()
         except Exception as exc:
             chainlit_log(f"remove feedback_element error:{exc}")
-    match = re.search(r"[A-Z]+-\d+", text or "")
+    match = re.search(r"[A-Za-z]+-\d+", text or "")
     if match:
-        text = match.group(0)
+        input_text = match.group(0)
+    else:
+        input_text = ""
     chainlit_log(f"message.content:{text}")
     await status_msg.send()
     cl.user_session.set("last_issue_key", text)
@@ -180,6 +185,15 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
                 cl.user_session.set("last_analysis_result", result_body)
                 await stream_output(final_msg, result_body)
                 await final_msg.send()
+                try:
+                    mysql_client.insert_analysis_log(
+                        ip=get_client_ip(),
+                        input_text=text,
+                        result_body=result_body,
+                    )
+                except Exception as exc:
+                    chainlit_log(f"insert_analysis_log error:{exc}")
+
                 invalid_msg = "No files provided for log analysis."
                 # if result_body != invalid_msg:
                 feedback_element = cl.CustomElement(
@@ -405,6 +419,14 @@ async def handle_auto_comment(action: cl.Action):
                 await refresh_feedback_message()
                 return
         add_comment_to_jira(issue_key, analysis_result)
+        try:
+            updated = mysql_client.update_analysis_log_add_comment(
+                input_text=issue_key,
+                result_body=analysis_result,
+            )
+            chainlit_log(f"update_analysis_log_add_comment:{updated}")
+        except Exception as exc:
+            chainlit_log(f"update_analysis_log_add_comment error:{exc}")
         cl.user_session.set("auto_comment_pending", False)
         cl.user_session.set("auto_comment_pending_key", None)
         cl.user_session.set("auto_comment_state", f"✅ AI智能分析已添加到 {issue_key}")

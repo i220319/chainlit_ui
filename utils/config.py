@@ -17,6 +17,7 @@ class AppConfig:
     mysql_password: str
     mysql_database: str
     mysql_table: str
+    mysql_analysis_table: str
 
 
 def load_config() -> AppConfig:
@@ -46,6 +47,7 @@ def load_config() -> AppConfig:
         mysql_password=os.getenv("MYSQL_PASSWORD", "abc.1234567890"),
         mysql_database=os.getenv("MYSQL_DATABASE", "5000agent_feedback"),
         mysql_table=os.getenv("MYSQL_TABLE", "used_feedback"),
+        mysql_analysis_table=os.getenv("MYSQL_ANALYSIS_TABLE", "analysis_runs"),
 
         # my_jira = MyJira("https://jira.amlogic.com", "lingzhi.bi", "Qwer!23456")
     )
