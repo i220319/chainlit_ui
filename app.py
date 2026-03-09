@@ -123,9 +123,11 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
             await prev_feedback_element.remove()
         except Exception as exc:
             chainlit_log(f"remove feedback_element error:{exc}")
-    match = re.search(r"[A-Za-z]+-\d+", text or "")
+    match = re.search(r"([A-Za-z]+-\d+)", text)
     if match:
         input_text = match.group(0)
+        print(f"input_text:{input_text}")
+        text = input_text
     else:
         input_text = ""
     chainlit_log(f"message.content:{text}")
