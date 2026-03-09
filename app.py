@@ -196,22 +196,22 @@ async def run_analysis(text: str, elements: Optional[list]) -> None:
 
                 invalid_msg = "No files provided for log analysis."
                 # if result_body != invalid_msg:
-                feedback_element = cl.CustomElement(
-                    name="FeedbackPanel",
-                    props={
-                        "feedbackState": None,
-                        "autoCommentState": None,
-                        "last_issue_key": text,
-                    },
-                )
-                final_msg.elements = [feedback_element]
+                if input_text:
+                    feedback_element = cl.CustomElement(
+                        name="FeedbackPanel",
+                        props={
+                            "feedbackState": None,
+                            "autoCommentState": None,
+                            "last_issue_key": text,
+                        },
+                    )
+                    final_msg.elements = [feedback_element]
 
-                cl.user_session.set("feedback_element", feedback_element)
-                cl.user_session.set("feedback_state", None)
-                cl.user_session.set("auto_comment_state", None)
-                cl.user_session.set("suggestion_state", None)
-                cl.user_session.set("auto_comment_pending", False)
-                cl.user_session.set("auto_comment_pending_key", None)
+                    cl.user_session.set("feedback_element", feedback_element)
+                    cl.user_session.set("feedback_state", None)
+                    cl.user_session.set("auto_comment_state", None)
+                    cl.user_session.set("suggestion_state", None)
+                    cl.user_session.set("auto_comment_pending", False)
 
                 await final_msg.update()
 
@@ -409,11 +409,9 @@ async def handle_auto_comment(action: cl.Action):
     try:
         existing = myjira.getAiCommentTimeWithSql(f"key = {issue_key}")
         pending = cl.user_session.get("auto_comment_pending")
-        pending_key = cl.user_session.get("auto_comment_pending_key")
         if existing:
-            if not pending or pending_key != issue_key:
+            if not pending:
                 cl.user_session.set("auto_comment_pending", True)
-                cl.user_session.set("auto_comment_pending_key", issue_key)
                 cl.user_session.set("auto_comment_state", f"⚠️ {issue_key} 已有 AI智能分析 ，需要再次添加，请再点击一次")
                 chainlit_log(f"⚠️ {issue_key} 已有评论，再点一次确认")
                 await refresh_feedback_message()
@@ -428,13 +426,11 @@ async def handle_auto_comment(action: cl.Action):
         except Exception as exc:
             chainlit_log(f"update_analysis_log_add_comment error:{exc}")
         cl.user_session.set("auto_comment_pending", False)
-        cl.user_session.set("auto_comment_pending_key", None)
         cl.user_session.set("auto_comment_state", f"✅ AI智能分析已添加到 {issue_key}")
         chainlit_log(f"✅ 已添加到 {issue_key}")
         await refresh_feedback_message()
     except Exception as exc:
         cl.user_session.set("auto_comment_pending", False)
-        cl.user_session.set("auto_comment_pending_key", None)
         cl.user_session.set("auto_comment_state", f"❌ 失败：{exc}")
         await refresh_feedback_message()
 
