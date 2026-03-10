@@ -24,10 +24,15 @@ mysql_client = MySQLClient(
     database=config.mysql_database,
     table=config.mysql_table,
     analysis_table=config.mysql_analysis_table,
+    access_table=config.mysql_access_table,
 )
 mysql_client.init_feedback_storage(config.mysql_database, config.mysql_table)
+chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_table}")
 mysql_client.init_analysis_storage(config.mysql_database, config.mysql_analysis_table)
-chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_table}/{config.mysql_analysis_table}")
+chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_analysis_table}")
+mysql_client.init_access_storage(config.mysql_database, config.mysql_access_table)
+chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_access_table}")
+
 # 1. 模拟的Yield函数 (Mock Yield Function)
 async def process_input(text: str, files: Optional[list] = None):
     """
@@ -246,6 +251,10 @@ async def heartbeat(msg: cl.Message):
 @cl.on_chat_start
 async def start():
     """聊天启动时发送说明并尝试自动触发分析。"""
+    try:
+        mysql_client.insert_access_log(ip=get_client_ip())
+    except Exception as exc:
+        chainlit_log(f"insert_access_log error:{exc}")
     await cl.Message(content='''
     ### 📌 使用方式
 

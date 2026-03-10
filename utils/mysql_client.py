@@ -19,6 +19,7 @@ class MySQLClient:
         database=None,
         table=None,
         analysis_table=None,
+        access_table=None,
         charset="utf8mb4",
         autocommit=False,
     ):
@@ -30,6 +31,7 @@ class MySQLClient:
         self.database = database or config.mysql_database
         self.table = table or config.mysql_table
         self.analysis_table = analysis_table or config.mysql_analysis_table
+        self.access_table = access_table or config.mysql_access_table
         self.charset = charset
         self.autocommit = autocommit
         self._conn = None
@@ -146,6 +148,24 @@ class MySQLClient:
         )
         self._conn.commit()
 
+    def create_access_table(self, database, table):
+        if not database:
+            raise ValueError("Database name is required")
+        if not table:
+            raise ValueError("Table name is required")
+        cur = self.cursor()
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS `{database}`.`{table}` (
+                access_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ip VARCHAR(45),
+                extra JSON
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        self._conn.commit()
+
     def init_feedback_storage(
         self,
         database=None,
@@ -177,6 +197,22 @@ class MySQLClient:
         self.create_analysis_table(target_database, target_table)
         self.database = target_database
         self.analysis_table = target_table
+
+    def init_access_storage(
+        self,
+        database=None,
+        table=None,
+    ):
+        if not database:
+            raise ValueError("Database name is required")
+        if not table:
+            raise ValueError("Table name is required")
+        target_database = database
+        target_table = table
+        self.create_database(target_database)
+        self.create_access_table(target_database, target_table)
+        self.database = target_database
+        self.access_table = target_table
 
     def insert_feedback(
         self,
@@ -237,6 +273,32 @@ class MySQLClient:
             VALUES (%s, %s, %s, %s)
             """,
             (ip, input_text, result_body, extra_json),
+        )
+        self._conn.commit()
+        self.database = target_database
+
+    def insert_access_log(
+        self,
+        ip=None,
+        extra=None,
+        database=None,
+        table=None,
+    ):
+        target_database = database or self.database
+        target_table = table or self.access_table
+        if not target_database:
+            raise ValueError("Database name is required")
+        if not target_table:
+            raise ValueError("Table name is required")
+        extra_json = json.dumps(extra or {}, ensure_ascii=False)
+        cur = self.cursor()
+        cur.execute(
+            f"""
+            INSERT INTO `{target_database}`.`{target_table}`
+                (ip, extra)
+            VALUES (%s, %s)
+            """,
+            (ip, extra_json),
         )
         self._conn.commit()
         self.database = target_database
