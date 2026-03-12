@@ -313,7 +313,16 @@ http://10.18.11.98:5000/
 如对本次自动分析结果存在疑问、发现异常情况或有优化建议，欢迎通过以下地址提交反馈：
 http://10.18.11.98:8053/?page=feedback'''
     comment_body = jira_comment_header + comment_body +  web_link
-    myjira.addComments(issue_key, comment_body)
+    try:
+        result = myjira.addComments(issue_key, comment_body)
+    except Exception as exc:
+        chainlit_log(f"addComments failed: {exc}")
+        return None
+    if result is not None:
+        try:
+            myjira.addLabel(issue_key, "SE-LN-LOG-2026")
+        except Exception as exc:
+            chainlit_log(f"addLabel failed: {exc}")
     return None
 
 

@@ -211,7 +211,15 @@ class MyJira:
         return comment_results
     
     def addComments(self, issue_key, comment_body):
-        self.mJira.add_comment(issue_key, comment_body)
+        return self.mJira.add_comment(issue_key, comment_body)
+
+    
+    def addLabel(self, issue_key, label="SE-LN-LOG-2026"):
+        issue = self.mJira.issue(issue_key)
+        labels = list(getattr(issue.fields, "labels", []) or [])
+        if label not in labels:
+            labels.append(label)
+            issue.update(fields={"labels": labels})
     
     def getLabelAppliedTimeWithSql(self, sql, label):
         issues = self.search_issues(sql)
@@ -249,36 +257,60 @@ class MyJira:
 
 def main():
     my_jira = MyJira("https://jira.amlogic.com", "lingzhi.bi", "Qwer!23456")
+    issue_key = "OTT-877778"
+    comment_body = "这是一条测试评论"
+
+    try:
+        ret = my_jira.addComments(issue_key, comment_body)
+    except Exception as exc:
+        ret = {
+            "error": str(exc),
+            "status_code": getattr(exc, "status_code", None),
+            "url": getattr(exc, "url", None),
+            "text": getattr(exc, "text", None),
+        }
+    try:
+        label_ret = my_jira.addLabel(issue_key, "SE-LN-LOG-2026")
+    except Exception as exc:
+        label_ret = {
+            "error": str(exc),
+            "status_code": getattr(exc, "status_code", None),
+            "url": getattr(exc, "url", None),
+            "text": getattr(exc, "text", None),
+        }
+    print(ret)
+    print(label_ret)
+    # print(type(ret))
     # sql = "assignee = \"lingzhi.bi\" AND labels = LN_TAG_2025_AI"
     # sql = "project in (\"OTT projects\") AND status not in (Closed, Done, Resolved, Verified) AND priority in (High, Highest) AND type in (Bug, Sub-bug) OR labels = SE-LN-LOG-2026"
     # sql = "project in (\"OTT projects\") AND status not in (Closed, Done, Resolved, Verified) AND priority in (High, Highest) AND type in (Bug, Sub-bug) AND created >= \"2026-02-01\""
-    sql = "key = OTT-92107"
-    jira_comment_header = '''
-    ⚠️ AI智能分析(For reference only) 有任何意见和建议可随时联系 nan.li或 lingzhi.bi
-'''
-    web_link = f'''\n🔗 Reference:
-不便上传至 Jira 的日志，可通过以下地址在线分析：
-http://10.18.11.98:5000/
-如对本次自动分析结果存在疑问、发现异常情况或有优化建议，欢迎通过以下地址提交反馈：
-http://10.18.11.98:8053/?page=feedback'''
-    comment = """
-    ⚠️ 2AI智能分析(For reference only) 有任何意见和建议可随时联系 nan.li或 lingzhi.bi
+#     sql = "key = OTT-92107"
+#     jira_comment_header = '''
+#     ⚠️ AI智能分析(For reference only) 有任何意见和建议可随时联系 nan.li或 lingzhi.bi
+# '''
+#     web_link = f'''\n🔗 Reference:
+# 不便上传至 Jira 的日志，可通过以下地址在线分析：
+# http://10.18.11.98:5000/
+# 如对本次自动分析结果存在疑问、发现异常情况或有优化建议，欢迎通过以下地址提交反馈：
+# http://10.18.11.98:8053/?page=feedback'''
+#     comment = """
+#     ⚠️ 2AI智能分析(For reference only) 有任何意见和建议可随时联系 nan.li或 lingzhi.bi
 
-*【结论综述】*: 播放失败的根本原因是底层多媒体库 `libaml_mp_sdk.ZTE.so` 缺失，导致播放器初始化失败，进而引发后续数据写入和时间戳获取错误，最终表现为“unsupported media”。
-*【关键日志依据】*:
-1. OTT-90998-logcat_pip_black.log: `dlopen library /system/lib/libaml_mp_sdk.ZTE.so failed: dlopen failed: library "/system/lib/libaml_mp_sdk.ZTE.so" not found`
-2. OTT-90998-logcat_pip_black.log: `Aml_MP_Player_WriteData failed! res = -1`
-3. OTT-90998-logcat_pip_black.log: `Aml_MP_Player_GetCurrentPts error return:-1`
-*【详细证据链】*:
-*环节 1：异常确认*: 播放器在初始化时尝试加载关键库 `libaml_mp_sdk.ZTE.so` 失败。 [证据：日志行 6267]
-*环节 2：中间机制分析*: 库加载失败导致播放器底层功能异常，无法正常写入数据（`Aml_MP_Player_WriteData failed`）和获取时间戳（`Aml_MP_Player_GetCurrentPts error`）。 [证据：日志行 7008, 7023]
-*环节 3：根因定位*: 库文件在系统中不存在（`library not found`），这是导致播放流程中断的直接原因。 [证据：日志行 6267]
-*【所属模块】*: 多媒体底层库 (libaml_mp_sdk.ZTE.so)
-🔗 Reference:
-不便上传至 Jira 的日志，可通过以下地址在线分析：
-http://10.18.11.98:5000/
-    """
-    priority_high_time = my_jira.addCommentsWithSql(sql, comment)
+# *【结论综述】*: 播放失败的根本原因是底层多媒体库 `libaml_mp_sdk.ZTE.so` 缺失，导致播放器初始化失败，进而引发后续数据写入和时间戳获取错误，最终表现为“unsupported media”。
+# *【关键日志依据】*:
+# 1. OTT-90998-logcat_pip_black.log: `dlopen library /system/lib/libaml_mp_sdk.ZTE.so failed: dlopen failed: library "/system/lib/libaml_mp_sdk.ZTE.so" not found`
+# 2. OTT-90998-logcat_pip_black.log: `Aml_MP_Player_WriteData failed! res = -1`
+# 3. OTT-90998-logcat_pip_black.log: `Aml_MP_Player_GetCurrentPts error return:-1`
+# *【详细证据链】*:
+# *环节 1：异常确认*: 播放器在初始化时尝试加载关键库 `libaml_mp_sdk.ZTE.so` 失败。 [证据：日志行 6267]
+# *环节 2：中间机制分析*: 库加载失败导致播放器底层功能异常，无法正常写入数据（`Aml_MP_Player_WriteData failed`）和获取时间戳（`Aml_MP_Player_GetCurrentPts error`）。 [证据：日志行 7008, 7023]
+# *环节 3：根因定位*: 库文件在系统中不存在（`library not found`），这是导致播放流程中断的直接原因。 [证据：日志行 6267]
+# *【所属模块】*: 多媒体底层库 (libaml_mp_sdk.ZTE.so)
+# 🔗 Reference:
+# 不便上传至 Jira 的日志，可通过以下地址在线分析：
+# http://10.18.11.98:5000/
+#     """
+#     priority_high_time = my_jira.addCommentsWithSql(sql, comment)
     # print(f"len(priority_high_time):{len(priority_high_time)}")
     # print(priority_high_time)
     # label_applied_time = my_jira.getLabelAppliedTimeWithSql(sql, "SE-LN-LOG-2026")
