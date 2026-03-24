@@ -73,8 +73,7 @@ async def prepare_file_paths(files: Optional[list]) -> list[str]:
         msg = "以下文件类型不支持，仅允许 .txt/.log/.zip/.7z/.tar.gz/.rar：\n"
         msg += "\n".join(f"- {name}" for name in invalid_files)
         await cl.Message(content=msg).send()
-
-    if files and not file_paths:
+    elif files and not file_paths:
         await cl.Message(
             content="未识别到可用的日志文件，请确认文件为 .txt/.log 或压缩包内包含这些文件。"
         ).send()
