@@ -3,6 +3,7 @@ import asyncio
 import threading
 import re
 import time
+import os
 from urllib.parse import urlparse, parse_qs
 from typing import Dict, Optional
 from test_client import analyze_logs_stream
@@ -10,6 +11,7 @@ from utils.logger import chainlit_log
 from utils.config import load_config
 from utils.jira_client import MyJira
 from utils.mysql_client import MySQLClient
+from utils.unzip_client import fetch_all_txt_files
 
 
 
@@ -46,10 +48,17 @@ async def process_input(text: str, files: Optional[list] = None):
     file_paths = []
     if files:
         for f in files:
-            if hasattr(f, "path"):
-                file_paths.append(f.path)
-            else:
-                file_paths.append(str(f))
+            path = getattr(f, "path", None) or str(f)
+            orig_name = getattr(f, "name", None)
+            base_dir = config.download_dir
+            chainlit_log(f"原始文件路径: {path}, 原始文件名: {orig_name}, 下载目录: {base_dir}")
+            extracted_files = fetch_all_txt_files(path, base_dir, orig_name)
+            # 转成绝对路径
+            for p in extracted_files:
+                abs_p = os.path.abspath(p)
+                if abs_p not in file_paths:
+                    file_paths.append(abs_p)
+            chainlit_log(f"提取到的文件路径: {file_paths}")
 
     # 2. Bridge Sync Generator to Async Iterator using Thread + Queue
     # This prevents the blocking 'requests' call from freezing the main event loop
