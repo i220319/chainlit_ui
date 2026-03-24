@@ -48,9 +48,9 @@ def load_config() -> AppConfig:
         mysql_user=os.getenv("MYSQL_USER", "root"),
         mysql_password=os.getenv("MYSQL_PASSWORD", "abc.1234567890"),
         mysql_database=os.getenv("MYSQL_DATABASE", "5000agent_feedback"),
-        mysql_table=os.getenv("MYSQL_TABLE", "test_used_feedback"),
-        mysql_analysis_table=os.getenv("MYSQL_ANALYSIS_TABLE", "test_analysis_runs"),
-        mysql_access_table=os.getenv("MYSQL_ACCESS_TABLE", "test_access_logs"),
+        mysql_table=os.getenv("MYSQL_TABLE", "used_feedback"),
+        mysql_analysis_table=os.getenv("MYSQL_ANALYSIS_TABLE", "analysis_runs"),
+        mysql_access_table=os.getenv("MYSQL_ACCESS_TABLE", "access_logs"),
         download_dir = os.getenv("DOWNLOAD_DIR", "data/downloads"),
 
         # my_jira = MyJira("https://jira.amlogic.com", "lingzhi.bi", "Qwer!23456")
