@@ -35,7 +35,55 @@ chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysq
 mysql_client.init_access_storage(config.mysql_database, config.mysql_access_table)
 chainlit_log(f"数据库配置成功 连接:{config.mysql_database}.{config.mysql_access_table}")
 
-# 1. 模拟的Yield函数 (Mock Yield Function)
+# 1. 处理上传文件的工具函数
+async def prepare_file_paths(files: Optional[list]) -> list[str]:
+    file_paths: list[str] = []
+    invalid_files: list[str] = []
+
+    if not files:
+        return file_paths
+
+    for f in files:
+        path = getattr(f, "path", None) or str(f)
+        orig_name = getattr(f, "name", None)
+        name_for_check = orig_name or os.path.basename(path)
+        lower_name = str(name_for_check).lower()
+        allowed = (
+            lower_name.endswith(".txt")
+            or lower_name.endswith(".log")
+            or lower_name.endswith(".zip")
+            or lower_name.endswith(".7z")
+            or lower_name.endswith(".tar.gz")
+            or lower_name.endswith(".rar")
+        )
+        if not allowed:
+            invalid_files.append(str(name_for_check))
+            chainlit_log(f"不支持的文件类型: {name_for_check}, 已跳过")
+            continue
+
+        base_dir = config.download_dir
+        chainlit_log(f"原始文件路径: {path}, 原始文件名: {orig_name}, 下载目录: {base_dir}")
+        extracted_files = fetch_all_txt_files(path, base_dir, orig_name)
+        for p in extracted_files:
+            abs_p = os.path.abspath(p)
+            if abs_p not in file_paths:
+                file_paths.append(abs_p)
+
+    if invalid_files:
+        msg = "以下文件类型不支持，仅允许 .txt/.log/.zip/.7z/.tar.gz/.rar：\n"
+        msg += "\n".join(f"- {name}" for name in invalid_files)
+        await cl.Message(content=msg).send()
+
+    if files and not file_paths:
+        await cl.Message(
+            content="未识别到可用的日志文件，请确认文件为 .txt/.log 或压缩包内包含这些文件。"
+        ).send()
+
+    chainlit_log(f"最终用于分析的文件路径: {file_paths}")
+    return file_paths
+
+
+# 2. 模拟的Yield函数 (Mock Yield Function)
 async def process_input(text: str, files: Optional[list] = None):
     """
     Simulates a processing function that yields status and final content.
@@ -45,20 +93,7 @@ async def process_input(text: str, files: Optional[list] = None):
     """
     
     # 1. Prepare file paths
-    file_paths = []
-    if files:
-        for f in files:
-            path = getattr(f, "path", None) or str(f)
-            orig_name = getattr(f, "name", None)
-            base_dir = config.download_dir
-            chainlit_log(f"原始文件路径: {path}, 原始文件名: {orig_name}, 下载目录: {base_dir}")
-            extracted_files = fetch_all_txt_files(path, base_dir, orig_name)
-            # 转成绝对路径
-            for p in extracted_files:
-                abs_p = os.path.abspath(p)
-                if abs_p not in file_paths:
-                    file_paths.append(abs_p)
-            chainlit_log(f"提取到的文件路径: {file_paths}")
+    file_paths = await prepare_file_paths(files)
 
     # 2. Bridge Sync Generator to Async Iterator using Thread + Queue
     # This prevents the blocking 'requests' call from freezing the main event loop
